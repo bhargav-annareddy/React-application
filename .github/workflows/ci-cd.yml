@@ -1,0 +1,54 @@
+name: "[PROD] Frontend"
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ pre-prod ]
+
+env:
+  IMAGE_NAME: frontend
+  CONTAINER_NAME: frontend
+  PORT: 3000
+
+jobs:
+  build:
+    name: Build Application
+    runs-on: [self-hosted, frontend-runner-prod]
+
+    outputs:
+      image_tag: ${{ steps.shortsha.outputs.tag }}
+
+    steps:
+      - name: Branch validation
+        if: github.ref != 'refs/heads/pre-prod'
+        run: |
+          echo "ERROR: Dev deployment should be from 'master' branch!"
+          exit 1
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Get Short SHA
+        id: shortsha
+        run: echo "tag=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker Image
+        env:
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+        run: |
+          docker build --build-arg NEXT_PUBLIC_API_BASE_URL="https://api.bhargav.com/api" -t $IMAGE_NAME:${{ steps.shortsha.outputs.tag }} .
+
+  deploy:
+    name: Deploy Container
+    runs-on: [self-hosted, frontend-runner-prod]
+    needs: build
+
+    steps:
+      - name: Stop Old Container
+        run: |
+          docker stop $CONTAINER_NAME || true
+          docker rm $CONTAINER_NAME || true
+
+      - name: Run New Container
+        run: |
+          docker run -d -p $PORT:3000 --name $CONTAINER_NAME -e NEXTAUTH_URL="https://test.bhargav.com" -e NEXTAUTH_SECRET="$NEXTAUTH_SECRET" $IMAGE_NAME:${{ needs.build.outputs.image_tag }}
